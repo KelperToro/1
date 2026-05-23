@@ -1,7 +1,10 @@
 local cfg_path="duco.cfg"
 local sha_url="https://raw.githubusercontent.com/Egor-Skriptunoff/pure_lua_SHA/master/sha2.lua"
 local base="https://server.duinocoin.com/legacy_job"
-local chunk_size=100000
+local max_chunk_size=100000
+local min_chunk_size=10000
+local target_waves=5
+local current_chunk_size=max_chunk_size
 local stale_ms=120000
 local timeout_ms=120000
 
@@ -126,7 +129,7 @@ local function draw()
     line(4,"Job: "..job_no.." diff "..diff.." "..progress,colors.gray)
     line(5,"State: "..state,colors.white)
     line(6,"Last: "..last,(last:find("GOOD") or last:find("BLOCK")) and colors.lime or colors.red)
-    line(7,"Chunk: "..chunk_size.." | Modem: "..modem,colors.gray)
+    line(7,"Chunk: "..current_chunk_size.." | Modem: "..modem,colors.gray)
 
     local y=9
     for _,id in ipairs(sorted_ids(miners)) do
@@ -185,8 +188,16 @@ end
 
 local function submit(nonce,target,rate,seconds)
     local name="CC-Farm-Master-"..os.getComputerID()
-    local url=base.."?u="..enc(cfg.username).."&r="..enc(nonce).."&k="..enc(cfg.key).."&s="..enc("CC Farm Master Turbo").."&j="..enc(target).."&i="..enc(name).."&h="..enc(rate).."&b="..enc(seconds).."&nocache="..os.epoch("utc")
+    local url=base.."?u="..enc(cfg.username).."&r="..enc(nonce).."&k="..enc(cfg.key).."&s="..enc("CC Farm Master Dynamic").."&j="..enc(target).."&i="..enc(name).."&h="..enc(rate).."&b="..enc(seconds).."&nocache="..os.epoch("utc")
     return req("POST",url) or "NO RESPONSE"
+end
+
+local function choose_chunk(limit,active_count)
+    local n=math.max(active_count,1)
+    local size=math.ceil((limit+1)/(n*target_waves))
+    if size<min_chunk_size then size=min_chunk_size end
+    if size>max_chunk_size then size=max_chunk_size end
+    return size
 end
 
 local function run_job(job)
@@ -195,6 +206,7 @@ local function run_job(job)
     local limit=diff*100
     local job_id=tostring(os.epoch("utc"))..":"..job_no
     local active=active_ids()
+    current_chunk_size=choose_chunk(limit,#active)
     local inflight={}
     local next_nonce=0
     local done_hashes=0
@@ -211,7 +223,7 @@ local function run_job(job)
     local function send_chunk(id)
         if next_nonce>limit then return false end
         local first=next_nonce
-        local lastn=math.min(limit,first+chunk_size-1)
+        local lastn=math.min(limit,first+current_chunk_size-1)
         next_nonce=lastn+1
         inflight[id]={first=first,lastn=lastn,sent=os.epoch("utc")}
         miners[id]=miners[id] or {}
@@ -236,7 +248,7 @@ local function run_job(job)
         local tick=os.startTimer(1)
         while not found and (next_nonce<=limit or remaining_inflight()>0) do
             progress=math.min(next_nonce,limit+1).."/"..(limit+1)
-            state="work "..remaining_inflight().." active"
+            state="work "..remaining_inflight().." chunks"
             draw()
 
             local ev,a,b,c=os.pullEvent()

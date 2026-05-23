@@ -1,4 +1,5 @@
 local sha_url="https://raw.githubusercontent.com/Egor-Skriptunoff/pure_lua_SHA/master/sha2.lua"
+local yield_each=5000
 
 if not fs.exists("sha2.lua") then
     print("Downloading sha2.lua")
@@ -43,6 +44,7 @@ local function draw()
     print("Status: "..status)
     print("Rate: "..rate.." H/s")
     print("Chunks: "..jobs)
+    print("Yield: "..yield_each)
 end
 
 local function ready(to)
@@ -75,7 +77,7 @@ local function work(sender,msg)
             nonce=n
             break
         end
-        if hashes%250==0 then
+        if hashes%yield_each==0 then
             pause()
             local now=os.epoch("utc")
             if now>=next_report then

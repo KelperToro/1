@@ -50,6 +50,12 @@ local function ready(to)
     if to then rednet.send(to,msg,"duco") else rednet.broadcast(msg,"duco") end
 end
 
+local function progress(to,job,hashes,started)
+    local ms=math.max(os.epoch("utc")-started,1)
+    rate=math.floor(hashes/(ms/1000))
+    rednet.send(to,{proto="duco_progress",id=id,job=job,rate=rate,jobs=jobs,status=status,hashes=hashes},"duco")
+end
+
 local function work(sender,msg)
     master=sender
     jobs=jobs+1
@@ -57,6 +63,7 @@ local function work(sender,msg)
     draw()
 
     local started=os.epoch("utc")
+    local next_report=started+1000
     local hashes=0
     local found=false
     local nonce=nil
@@ -68,13 +75,22 @@ local function work(sender,msg)
             nonce=n
             break
         end
-        if hashes%250==0 then pause() end
+        if hashes%250==0 then
+            pause()
+            local now=os.epoch("utc")
+            if now>=next_report then
+                status="work "..n.."/"..msg.lastn
+                progress(sender,msg.job,hashes,started)
+                draw()
+                next_report=now+1000
+            end
+        end
     end
 
     local ms=math.max(os.epoch("utc")-started,1)
     rate=math.floor(hashes/(ms/1000))
     status=found and ("found "..nonce) or "done"
-    rednet.send(sender,{proto="duco_result",id=id,job=msg.job,found=found,nonce=nonce,hashes=hashes,ms=ms,rate=rate},"duco")
+    rednet.send(sender,{proto="duco_result",id=id,job=msg.job,found=found,nonce=nonce,hashes=hashes,ms=ms,rate=rate,jobs=jobs,status=status},"duco")
     ready(sender)
     draw()
 end

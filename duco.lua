@@ -47,6 +47,7 @@ local last="starting"
 local rate=0
 local avg=0
 local shares=0
+local hashes=0
 local started=os.epoch("utc")
 
 local function enc(v)
@@ -74,13 +75,19 @@ local function write_line(t,y,s,c)
     t.write(s)
 end
 
+local function status_color()
+    if last:find("GOOD") or last:find("BLOCK") then return colors.lime end
+    if last=="starting" then return colors.yellow end
+    return colors.red
+end
+
 local function draw(t)
     if not t then return end
     t.clear()
     write_line(t,1,"DUINO-COIN CC MINER",colors.lightBlue)
     write_line(t,2,"User: "..cfg.username,colors.white)
     write_line(t,3,"Miner: "..miner,colors.gray)
-    write_line(t,5,"Last: "..last, last:find("GOOD") or last:find("BLOCK") and colors.lime or colors.red)
+    write_line(t,5,"Last: "..last,status_color())
     write_line(t,6,"Rate: "..rate.." H/s",colors.lime)
     write_line(t,7,"Avg:  "..avg.." H/s",colors.green)
     write_line(t,8,"OK/BAD: "..accepted.."/"..rejected,colors.yellow)
@@ -124,7 +131,8 @@ while true do
             local seconds=math.max((os.epoch("utc")-start)/1000,0.001)
             rate=math.floor(result/seconds)
             shares=shares+1
-            avg=math.floor((shares*result)/math.max((os.epoch("utc")-started)/1000,0.001))
+            hashes=hashes+result
+            avg=math.floor(hashes/math.max((os.epoch("utc")-started)/1000,0.001))
 
             local submit_url=base.."?u="..enc(cfg.username).."&r="..enc(result).."&k="..enc(cfg.key).."&s="..enc("CC Tweaked Miner 1.2").."&j="..enc(expected_hash).."&i="..enc(miner).."&h="..enc(rate).."&b="..enc(seconds).."&nocache="..os.epoch("utc")
             local feedback=req("POST",submit_url) or "NO RESPONSE"

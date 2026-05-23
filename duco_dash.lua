@@ -1,9 +1,9 @@
 local cfg_path="duco.cfg"
 local sha_url="https://raw.githubusercontent.com/Egor-Skriptunoff/pure_lua_SHA/master/sha2.lua"
 local base="https://server.duinocoin.com/legacy_job"
-local chunk_size=1000
+local chunk_size=25000
 local stale_ms=20000
-local timeout_ms=15000
+local timeout_ms=20000
 
 if not fs.exists("sha2.lua") then
     print("Downloading sha2.lua")
@@ -130,7 +130,7 @@ local function draw()
     line(4,"Job: "..job_no.." diff "..diff.." "..progress,colors.gray)
     line(5,"State: "..state,colors.white)
     line(6,"Last: "..last,(last:find("GOOD") or last:find("BLOCK")) and colors.lime or colors.red)
-    line(7,"Modem: "..modem,colors.gray)
+    line(7,"Chunk: "..chunk_size.." | Modem: "..modem,colors.gray)
 
     local y=9
     for _,id in ipairs(sorted_ids(miners)) do
@@ -187,13 +187,8 @@ end
 
 local function submit(nonce,target,rate,seconds)
     local name="CC-Farm-Master-"..os.getComputerID()
-    local url=base.."?u="..enc(cfg.username).."&r="..enc(nonce).."&k="..enc(cfg.key).."&s="..enc("CC Farm Master 1.1").."&j="..enc(target).."&i="..enc(name).."&h="..enc(rate).."&b="..enc(seconds).."&nocache="..os.epoch("utc")
+    local url=base.."?u="..enc(cfg.username).."&r="..enc(nonce).."&k="..enc(cfg.key).."&s="..enc("CC Farm Master 1.2").."&j="..enc(target).."&i="..enc(name).."&h="..enc(rate).."&b="..enc(seconds).."&nocache="..os.epoch("utc")
     return req("POST",url) or "NO RESPONSE"
-end
-
-local function handle_idle_message(sender,msg)
-    if type(msg)~="table" then return end
-    if msg.proto=="duco_ready" then touch(sender,msg) end
 end
 
 local function run_job(job)

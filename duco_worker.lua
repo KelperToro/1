@@ -1,4 +1,7 @@
 local sha_url="https://raw.githubusercontent.com/Egor-Skriptunoff/pure_lua_SHA/master/sha2.lua"
+local worker_url="https://raw.githubusercontent.com/KelperToro/1/main/duco_worker.lua"
+local worker_file="duco_worker.lua"
+local startup_file="startup.lua"
 local yield_each=5000
 local report_interval=3000
 local draw_interval=15000
@@ -61,6 +64,57 @@ local function ready(to)
     if to then rednet.send(to,msg,"duco") else rednet.broadcast(msg,"duco") end
 end
 
+local function install_startup()
+    local f=fs.open(startup_file,"w")
+    f.write("shell.run(\""..worker_file.."\")\n")
+    f.close()
+end
+
+local function download(url,path)
+    local sep=url:find("?",1,true) and "&" or "?"
+    local r,e=http.get(url..sep.."nocache="..os.epoch("utc"))
+    if not r then return false,tostring(e) end
+    local body=r.readAll()
+    r.close()
+    if not body or #body<1000 then return false,"short download" end
+    local tmp=path..".new"
+    local f=fs.open(tmp,"w")
+    f.write(body)
+    f.close()
+    if fs.exists(path) then fs.delete(path) end
+    fs.move(tmp,path)
+    return true
+end
+
+local function update_self(to,msg)
+    status="updating"
+    maybe_draw(true)
+    local url=(type(msg)=="table" and msg.url) or worker_url
+    local ok,err=download(url,worker_file)
+    if ok then
+        install_startup()
+        rednet.send(to,{proto="duco_update_ack",id=id,ok=true,rate=rate,jobs=jobs,status="rebooting"},"duco")
+        sleep(0.5)
+        os.reboot()
+    else
+        status="update failed"
+        rednet.send(to,{proto="duco_update_ack",id=id,ok=false,err=err,status=status},"duco")
+        maybe_draw(true)
+    end
+end
+
+local function check_control()
+    while true do
+        local sender,msg,protocol=rednet.receive("duco",0)
+        if not sender then break end
+        if type(msg)=="table" and msg.proto=="duco_update" then
+            update_self(sender,msg)
+        elseif type(msg)=="table" and msg.proto=="duco_ping" then
+            ready(sender)
+        end
+    end
+end
+
 local function progress(to,job,hashes,started)
     local ms=math.max(os.epoch("utc")-started,1)
     rate=math.floor(hashes/(ms/1000))
@@ -90,6 +144,7 @@ local function work(sender,msg)
             pause()
             local now=os.epoch("utc")
             if now>=next_report then
+                check_control()
                 status="work "..n.."/"..msg.lastn
                 progress(sender,msg.job,hashes,started)
                 maybe_draw(false)
@@ -115,6 +170,8 @@ while true do
         ready()
     elseif type(msg)=="table" and msg.proto=="duco_ping" then
         ready(sender)
+    elseif type(msg)=="table" and msg.proto=="duco_update" then
+        update_self(sender,msg)
     elseif type(msg)=="table" and msg.proto=="duco_work" then
         work(sender,msg)
     end

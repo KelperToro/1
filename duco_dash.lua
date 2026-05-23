@@ -7,6 +7,10 @@ local target_waves=5
 local current_chunk_size=max_chunk_size
 local stale_ms=120000
 local timeout_ms=120000
+local draw_interval=1000
+local discover_fast=0.2
+local discover_full=1
+local discover_interval=15000
 
 if not fs.exists("sha2.lua") then
     print("Downloading sha2.lua")
@@ -65,6 +69,8 @@ local job_no=0
 local diff=0
 local progress="0/0"
 local total_rate=0
+local last_draw=0
+local last_discover=0
 
 local function enc(v)
     return textutils.urlEncode(tostring(v or ""))
@@ -117,7 +123,11 @@ local function active_ids()
     return out
 end
 
-local function draw()
+local function draw(force)
+    local now_draw=os.epoch("utc")
+    if not force and now_draw-last_draw<draw_interval then return end
+    last_draw=now_draw
+
     local active=active_ids()
     total_rate=0
     for _,id in ipairs(active) do total_rate=total_rate+(miners[id].rate or 0) end
@@ -134,7 +144,7 @@ local function draw()
     local y=9
     for _,id in ipairs(sorted_ids(miners)) do
         local m=miners[id]
-        local fresh=os.epoch("utc")-(m.seen or 0)<=stale_ms
+        local fresh=now_draw-(m.seen or 0)<=stale_ms
         local c=fresh and colors.white or colors.gray
         line(y,"#"..id.." "..(m.rate or 0).." H/s "..(m.status or "?"),c)
         y=y+1
@@ -307,16 +317,21 @@ local function run_job(job)
     draw()
 end
 
-draw()
+draw(true)
 
 while true do
-    discover(1)
+    local active_now=#active_ids()
+    local now_loop=os.epoch("utc")
+    if active_now==0 or now_loop-last_discover>=discover_interval then
+        discover(active_now==0 and discover_full or discover_fast)
+        last_discover=os.epoch("utc")
+    end
     state="get job"
     draw()
     local job,err=get_job()
     if not job then
         last="GET "..tostring(err)
-        draw()
+        draw(true)
         os.sleep(5)
     else
         run_job(job)

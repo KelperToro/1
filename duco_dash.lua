@@ -2,8 +2,8 @@ local cfg_path="duco.cfg"
 local sha_url="https://raw.githubusercontent.com/Egor-Skriptunoff/pure_lua_SHA/master/sha2.lua"
 local base="https://server.duinocoin.com/legacy_job"
 local chunk_size=100000
-local stale_ms=20000
-local timeout_ms=90000
+local stale_ms=120000
+local timeout_ms=120000
 
 if not fs.exists("sha2.lua") then
     print("Downloading sha2.lua")
@@ -162,9 +162,11 @@ local function discover(seconds)
     local timer=os.startTimer(seconds or 1)
     while true do
         local ev,a,b,c=os.pullEvent()
-        if ev=="rednet_message" and c=="duco" and type(b)=="table" and b.proto=="duco_ready" then
-            touch(a,b)
-            draw()
+        if ev=="rednet_message" and c=="duco" and type(b)=="table" then
+            if b.proto=="duco_ready" or b.proto=="duco_progress" or b.proto=="duco_result" then
+                touch(a,b)
+                draw()
+            end
         elseif ev=="timer" and a==timer then
             break
         end
@@ -241,8 +243,10 @@ local function run_job(job)
             if ev=="rednet_message" and c=="duco" and type(b)=="table" then
                 if b.proto=="duco_ready" then
                     touch(a,b)
+                elseif b.proto=="duco_progress" and b.job==job_id then
+                    touch(a,b)
                 elseif b.proto=="duco_result" and b.job==job_id and inflight[a] then
-                    touch(a,{rate=b.rate or 0,jobs=miners[a] and miners[a].jobs or 0,status=b.found and "found" or "done"})
+                    touch(a,b)
                     done_hashes=done_hashes+(b.hashes or 0)
                     inflight[a]=nil
                     if b.found then

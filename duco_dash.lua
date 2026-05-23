@@ -1,5 +1,6 @@
 local cfg_path="duco.cfg"
 local sha_url="https://raw.githubusercontent.com/Egor-Skriptunoff/pure_lua_SHA/master/sha2.lua"
+local worker_url="https://raw.githubusercontent.com/KelperToro/1/main/duco_worker.lua"
 local base="https://server.duinocoin.com/legacy_job"
 local max_chunk_size=100000
 local min_chunk_size=10000
@@ -11,6 +12,73 @@ local draw_interval=1000
 local discover_fast=0.2
 local discover_full=1
 local discover_interval=15000
+local update_wait=15
+local args={...}
+
+local function open_modem()
+    for _,name in ipairs(peripheral.getNames()) do
+        if peripheral.getType(name)=="modem" then
+            rednet.open(name)
+            return name
+        end
+    end
+    error("No modem found")
+end
+
+local function run_update()
+    local modem=open_modem()
+    local ok={}
+    local bad={}
+    local seen={}
+    local started=os.epoch("utc")
+    local deadline=started+update_wait*1000
+    local next_broadcast=0
+
+    term.clear()
+    term.setCursorPos(1,1)
+    term.setTextColor(colors.lightBlue)
+    print("DUCO WORKER UPDATE")
+    term.setTextColor(colors.white)
+    print("Modem: "..modem)
+    print("URL: "..worker_url)
+    print("")
+
+    while os.epoch("utc")<deadline do
+        local now=os.epoch("utc")
+        if now>=next_broadcast then
+            rednet.broadcast({proto="duco_update",url=worker_url},"duco")
+            next_broadcast=now+2000
+        end
+
+        term.setCursorPos(1,5)
+        term.clearLine()
+        term.write("OK: "..#ok.." | FAIL: "..#bad.." | Wait: "..math.ceil((deadline-now)/1000).."s")
+
+        local sender,msg,protocol=rednet.receive("duco",0.5)
+        if sender and protocol=="duco" and type(msg)=="table" and msg.proto=="duco_update_ack" and not seen[sender] then
+            seen[sender]=true
+            if msg.ok then
+                table.insert(ok,sender)
+                term.setTextColor(colors.lime)
+                print("#"..sender.." updated, rebooting")
+            else
+                table.insert(bad,sender)
+                term.setTextColor(colors.red)
+                print("#"..sender.." failed: "..tostring(msg.err))
+            end
+            term.setTextColor(colors.white)
+        end
+    end
+
+    term.setTextColor(colors.white)
+    print("")
+    print("Done. Updated: "..#ok.." | Failed: "..#bad)
+end
+
+if args[1]=="update" then
+    run_update()
+    return
+end
 
 if not fs.exists("sha2.lua") then
     print("Downloading sha2.lua")
@@ -47,15 +115,7 @@ local f=fs.open(cfg_path,"w")
 f.write(ser(cfg))
 f.close()
 
-local modem=nil
-for _,name in ipairs(peripheral.getNames()) do
-    if peripheral.getType(name)=="modem" then
-        modem=name
-        rednet.open(name)
-        break
-    end
-end
-if not modem then error("No modem found") end
+local modem=open_modem()
 
 local screen=peripheral.find("monitor") or term
 if screen.setTextScale then screen.setTextScale(0.5) end

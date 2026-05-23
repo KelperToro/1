@@ -1,5 +1,7 @@
 local sha_url="https://raw.githubusercontent.com/Egor-Skriptunoff/pure_lua_SHA/master/sha2.lua"
 local yield_each=5000
+local report_interval=3000
+local draw_interval=15000
 
 if not fs.exists("sha2.lua") then
     print("Downloading sha2.lua")
@@ -27,6 +29,7 @@ local rate=0
 local jobs=0
 local status="ready"
 local master="none"
+local last_draw=0
 
 local function pause()
     os.queueEvent("duco_yield")
@@ -34,6 +37,7 @@ local function pause()
 end
 
 local function draw()
+    last_draw=os.epoch("utc")
     term.clear()
     term.setCursorPos(1,1)
     term.setTextColor(colors.lightBlue)
@@ -45,6 +49,11 @@ local function draw()
     print("Rate: "..rate.." H/s")
     print("Chunks: "..jobs)
     print("Yield: "..yield_each)
+end
+
+local function maybe_draw(force)
+    local now=os.epoch("utc")
+    if force or now-last_draw>=draw_interval then draw() end
 end
 
 local function ready(to)
@@ -62,10 +71,10 @@ local function work(sender,msg)
     master=sender
     jobs=jobs+1
     status="work "..msg.first.."-"..msg.lastn
-    draw()
+    maybe_draw(false)
 
     local started=os.epoch("utc")
-    local next_report=started+1000
+    local next_report=started+report_interval
     local hashes=0
     local found=false
     local nonce=nil
@@ -83,8 +92,8 @@ local function work(sender,msg)
             if now>=next_report then
                 status="work "..n.."/"..msg.lastn
                 progress(sender,msg.job,hashes,started)
-                draw()
-                next_report=now+1000
+                maybe_draw(false)
+                next_report=now+report_interval
             end
         end
     end
@@ -94,7 +103,7 @@ local function work(sender,msg)
     status=found and ("found "..nonce) or "done"
     rednet.send(sender,{proto="duco_result",id=id,job=msg.job,found=found,nonce=nonce,hashes=hashes,ms=ms,rate=rate,jobs=jobs,status=status},"duco")
     ready(sender)
-    draw()
+    maybe_draw(false)
 end
 
 draw()

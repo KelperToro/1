@@ -7,7 +7,8 @@ local min_chunk_size=10000
 local target_waves=5
 local current_chunk_size=max_chunk_size
 local stale_ms=120000
-local timeout_ms=120000
+local timeout_ms=180000
+local cooldown_ms=30000
 local draw_interval=1000
 local discover_fast=0.2
 local discover_full=1
@@ -183,14 +184,36 @@ local function active_ids()
     return out
 end
 
+local function available_ids()
+    local out={}
+    local now=os.epoch("utc")
+    for id,m in pairs(miners) do
+        local fresh=now-(m.seen or 0)<=stale_ms
+        local cooled=not m.cooldown_until or now>=m.cooldown_until
+        if fresh and cooled then table.insert(out,id) end
+    end
+    table.sort(out)
+    return out
+end
+
+local function sum_rates(max_age)
+    local sum=0
+    local now=os.epoch("utc")
+    for _,m in pairs(miners) do
+        if now-(m.seen or 0)<=max_age then
+            sum=sum+(m.rate or 0)
+        end
+    end
+    return sum
+end
+
 local function draw(force)
     local now_draw=os.epoch("utc")
     if not force and now_draw-last_draw<draw_interval then return end
     last_draw=now_draw
 
     local active=active_ids()
-    total_rate=0
-    for _,id in ipairs(active) do total_rate=total_rate+(miners[id].rate or 0) end
+    total_rate=sum_rates(stale_ms)
 
     screen.clear()
     line(1,"DUCO FARM MASTER",colors.lightBlue)
@@ -275,9 +298,11 @@ local function run_job(job)
     diff=job.diff
     local limit=diff*100
     local job_id=tostring(os.epoch("utc"))..":"..job_no
-    local active=active_ids()
+    local active=available_ids()
     current_chunk_size=choose_chunk(limit,#active)
     local inflight={}
+    local pending={}
+    local task_no=0
     local next_nonce=0
     local done_hashes=0
     local found=false
@@ -290,16 +315,47 @@ local function run_job(job)
         return n
     end
 
-    local function send_chunk(id)
-        if next_nonce>limit then return false end
+    local function queue_chunk(first,lastn)
+        table.insert(pending,{first=first,lastn=lastn})
+    end
+
+    local function next_chunk()
+        if #pending>0 then return table.remove(pending,1) end
+        if next_nonce>limit then return nil end
         local first=next_nonce
         local lastn=math.min(limit,first+current_chunk_size-1)
         next_nonce=lastn+1
-        inflight[id]={first=first,lastn=lastn,sent=os.epoch("utc")}
-        miners[id]=miners[id] or {}
-        miners[id].status="sent "..first.."-"..lastn
-        rednet.send(id,{proto="duco_work",job=job_id,seed=job.seed,target=job.target,first=first,lastn=lastn},"duco")
+        return {first=first,lastn=lastn}
+    end
+
+    local function same_task(id,msg)
+        local ch=inflight[id]
+        if not ch then return false end
+        if msg.task and ch.task and msg.task~=ch.task then return false end
+        if msg.first and msg.first~=ch.first then return false end
         return true
+    end
+
+    local function send_chunk(id)
+        local now=os.epoch("utc")
+        local m=miners[id]
+        if not m or now-(m.seen or 0)>stale_ms or (m.cooldown_until and now<m.cooldown_until) then return false end
+        local ch=next_chunk()
+        if not ch then return false end
+        task_no=task_no+1
+        ch.sent=now
+        ch.task=job_id..":"..task_no
+        inflight[id]=ch
+        miners[id]=miners[id] or {}
+        miners[id].status="sent "..ch.first.."-"..ch.lastn
+        rednet.send(id,{proto="duco_work",job=job_id,task=ch.task,seed=job.seed,target=job.target,first=ch.first,lastn=ch.lastn},"duco")
+        return true
+    end
+
+    local function fill_workers()
+        for _,id in ipairs(available_ids()) do
+            if not inflight[id] then send_chunk(id) end
+        end
     end
 
     if #active==0 then
@@ -312,11 +368,11 @@ local function run_job(job)
         done_hashes=h
     else
         state="send chunks"
-        for _,id in ipairs(active) do send_chunk(id) end
+        fill_workers()
         draw()
 
         local tick=os.startTimer(1)
-        while not found and (next_nonce<=limit or remaining_inflight()>0) do
+        while not found and (next_nonce<=limit or #pending>0 or remaining_inflight()>0) do
             progress=math.min(next_nonce,limit+1).."/"..(limit+1)
             state="work "..remaining_inflight().." chunks"
             draw()
@@ -325,9 +381,10 @@ local function run_job(job)
             if ev=="rednet_message" and c=="duco" and type(b)=="table" then
                 if b.proto=="duco_ready" then
                     touch(a,b)
-                elseif b.proto=="duco_progress" and b.job==job_id then
+                    if not inflight[a] then send_chunk(a) end
+                elseif b.proto=="duco_progress" and b.job==job_id and same_task(a,b) then
                     touch(a,b)
-                elseif b.proto=="duco_result" and b.job==job_id and inflight[a] then
+                elseif b.proto=="duco_result" and b.job==job_id and same_task(a,b) then
                     touch(a,b)
                     done_hashes=done_hashes+(b.hashes or 0)
                     inflight[a]=nil
@@ -343,19 +400,12 @@ local function run_job(job)
                 for id,ch in pairs(inflight) do
                     if now-(ch.sent or 0)>timeout_ms then
                         miners[id].status="timeout"
-                        state="fallback #"..id
-                        draw()
-                        local ok,n,h=mine_range(job.seed,job.target,ch.first,ch.lastn)
-                        done_hashes=done_hashes+h
+                        miners[id].cooldown_until=now+cooldown_ms
+                        queue_chunk(ch.first,ch.lastn)
                         inflight[id]=nil
-                        if ok then
-                            found=true
-                            nonce=n
-                        elseif not found then
-                            send_chunk(id)
-                        end
                     end
                 end
+                fill_workers()
                 tick=os.startTimer(1)
             end
         end
@@ -363,11 +413,12 @@ local function run_job(job)
 
     local seconds=math.max((os.epoch("utc")-started)/1000,0.001)
     local rate=math.floor(done_hashes/seconds)
+    local submit_rate=math.max(rate,sum_rates(30000))
 
     if found then
         state="submit"
         draw()
-        last=submit(nonce,job.target,rate,seconds)
+        last=submit(nonce,job.target,submit_rate,seconds)
         if last:find("GOOD") or last:find("BLOCK") then accepted=accepted+1 else rejected=rejected+1 end
     else
         last="NO NONCE"

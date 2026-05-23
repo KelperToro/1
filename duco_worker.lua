@@ -11,7 +11,6 @@ if not fs.exists("sha2.lua") then
 end
 
 local sha=require("sha2")
-
 local modem=nil
 for _,name in ipairs(peripheral.getNames()) do
     if peripheral.getType(name)=="modem" then
@@ -20,14 +19,13 @@ for _,name in ipairs(peripheral.getNames()) do
         break
     end
 end
-
 if not modem then error("No modem found") end
 
 local id=os.getComputerID()
 local rate=0
 local jobs=0
 local status="ready"
-local last_master="none"
+local master="none"
 
 local function pause()
     os.queueEvent("duco_yield")
@@ -38,13 +36,13 @@ local function draw()
     term.clear()
     term.setCursorPos(1,1)
     term.setTextColor(colors.lightBlue)
-    print("DUCO FARM WORKER #"..id)
+    print("DUCO WORKER #"..id)
     term.setTextColor(colors.white)
     print("Modem: "..modem)
-    print("Master: "..tostring(last_master))
+    print("Master: "..tostring(master))
     print("Status: "..status)
     print("Rate: "..rate.." H/s")
-    print("Jobs: "..jobs)
+    print("Chunks: "..jobs)
 end
 
 local function ready(to)
@@ -52,10 +50,10 @@ local function ready(to)
     if to then rednet.send(to,msg,"duco") else rednet.broadcast(msg,"duco") end
 end
 
-local function work(master,msg)
-    last_master=master
+local function work(sender,msg)
+    master=sender
     jobs=jobs+1
-    status="work "..msg.from.."-"..msg.to
+    status="work "..msg.first.."-"..msg.lastn
     draw()
 
     local started=os.epoch("utc")
@@ -63,9 +61,9 @@ local function work(master,msg)
     local found=false
     local nonce=nil
 
-    for n=msg.from,msg.to do
+    for n=msg.first,msg.lastn do
         hashes=hashes+1
-        if sha.sha1(msg.last..tostring(n))==msg.target then
+        if sha.sha1(msg.seed..tostring(n))==msg.target then
             found=true
             nonce=n
             break
@@ -76,9 +74,8 @@ local function work(master,msg)
     local ms=math.max(os.epoch("utc")-started,1)
     rate=math.floor(hashes/(ms/1000))
     status=found and ("found "..nonce) or "done"
-
-    rednet.send(master,{proto="duco_result",id=id,job=msg.job,found=found,nonce=nonce,hashes=hashes,ms=ms,rate=rate},"duco")
-    ready(master)
+    rednet.send(sender,{proto="duco_result",id=id,job=msg.job,found=found,nonce=nonce,hashes=hashes,ms=ms,rate=rate},"duco")
+    ready(sender)
     draw()
 end
 

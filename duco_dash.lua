@@ -1,9 +1,9 @@
 local cfg_path="duco.cfg"
 local sha_url="https://raw.githubusercontent.com/Egor-Skriptunoff/pure_lua_SHA/master/sha2.lua"
 local base="https://server.duinocoin.com/legacy_job"
-local chunk_size=25000
+local chunk_size=100000
 local stale_ms=20000
-local timeout_ms=20000
+local timeout_ms=90000
 
 if not fs.exists("sha2.lua") then
     print("Downloading sha2.lua")
@@ -81,14 +81,10 @@ local function req(method,url)
     return b
 end
 
-local function color(c)
-    if screen.setTextColor then screen.setTextColor(c) end
-end
-
 local function line(y,text,c)
     screen.setCursorPos(1,y)
     screen.clearLine()
-    color(c or colors.white)
+    if screen.setTextColor then screen.setTextColor(c or colors.white) end
     screen.write(text)
 end
 
@@ -141,7 +137,7 @@ local function draw()
         y=y+1
         if y>18 then break end
     end
-    color(colors.white)
+    if screen.setTextColor then screen.setTextColor(colors.white) end
 end
 
 local function mine_range(seed,target,first,lastn)
@@ -187,7 +183,7 @@ end
 
 local function submit(nonce,target,rate,seconds)
     local name="CC-Farm-Master-"..os.getComputerID()
-    local url=base.."?u="..enc(cfg.username).."&r="..enc(nonce).."&k="..enc(cfg.key).."&s="..enc("CC Farm Master 1.2").."&j="..enc(target).."&i="..enc(name).."&h="..enc(rate).."&b="..enc(seconds).."&nocache="..os.epoch("utc")
+    local url=base.."?u="..enc(cfg.username).."&r="..enc(nonce).."&k="..enc(cfg.key).."&s="..enc("CC Farm Master Turbo").."&j="..enc(target).."&i="..enc(name).."&h="..enc(rate).."&b="..enc(seconds).."&nocache="..os.epoch("utc")
     return req("POST",url) or "NO RESPONSE"
 end
 
